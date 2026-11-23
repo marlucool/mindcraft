@@ -7,6 +7,7 @@ import { plugin as pvp } from 'mineflayer-pvp';
 import { plugin as collectblock } from 'mineflayer-collectblock';
 import { loader as autoEat } from 'mineflayer-auto-eat';
 import plugin from 'mineflayer-armor-manager';
+import { configurePlayerCollisionWidth } from './player_physics.js';
 const armorManager = plugin;
 let mc_version = settings.minecraft_version;
 let mcdata = null;
@@ -119,6 +120,7 @@ export function initBot(username) {
 
     const bot = createBot(options);
 
+    configurePlayerCollisionWidth(bot);
     enableFabricRegistrySync(bot);
 
     // Throttle position packets to avoid kicks on Paper/Spigot servers
