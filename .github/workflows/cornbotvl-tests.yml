@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   focused-regressions:
-    name: Focused navigation and physics regressions
+    name: Focused navigation, physics and model regressions
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -28,12 +28,4 @@ jobs:
         run: npm ci
 
       - name: Run focused regression tests
-        run: |
-          node --test \
-            tests/player_physics.test.js \
-            tests/pathfinder_vine_climbables.test.js \
-            tests/pathfinder_diagonal_corners.test.js \
-            tests/goto_path_search.test.js \
-            tests/door_types.test.js \\
-            tests/move_away.test.js \\
-            tests/gpt_qwen_compat.test.js
+        run: node --test tests/player_physics.test.js tests/pathfinder_vine_climbables.test.js tests/pathfinder_diagonal_corners.test.js tests/goto_path_search.test.js tests/door_types.test.js tests/move_away.test.js tests/gpt_qwen_compat.test.js
