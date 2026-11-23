@@ -1444,32 +1444,60 @@ export async function moveAway(bot, distance) {
      * Move away from current position in any direction.
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {number} distance, the distance to move away.
-     * @returns {Promise<boolean>} true if the bot moved away, false otherwise.
+     * @returns {Promise<boolean>} true only when the bot is confirmed beyond the requested distance.
      * @example
      * await skills.moveAway(bot, 8);
      **/
-    const pos = bot.entity.position;
-    let goal = new pf.goals.GoalNear(pos.x, pos.y, pos.z, distance);
-    let inverted_goal = new pf.goals.GoalInvert(goal);
-    bot.pathfinder.setMovements(new pf.Movements(bot));
+    if (!Number.isFinite(distance) || distance <= 0 || !bot.entity?.position) {
+        log(bot, 'Recovery distance must be a positive number.');
+        return false;
+    }
+
+    const startPos = bot.entity.position.clone();
+    const nearGoal = new pf.goals.GoalNear(startPos.x, startPos.y, startPos.z, distance);
+    const invertedGoal = new pf.goals.GoalInvert(nearGoal);
+    const movements = new pf.Movements(bot);
+    bot.pathfinder.setMovements(movements);
 
     if (bot.modes.isOn('cheat')) {
-        const move = new pf.Movements(bot);
-        const path = await bot.pathfinder.getPathTo(move, inverted_goal, 10000);
-        let last_move = path.path[path.path.length-1];
-        if (last_move) {
-            let x = Math.floor(last_move.x);
-            let y = Math.floor(last_move.y);
-            let z = Math.floor(last_move.z);
-            bot.chat('/tp @s ' + x + ' ' + y + ' ' + z);
-            return true;
+        try {
+            const result = await bot.pathfinder.getPathTo(movements, invertedGoal, 10000);
+            const lastMove = result?.status === 'success' ? result.path?.at(-1) : null;
+            if (!lastMove) {
+                log(bot, 'Could not find a complete recovery destination.');
+                return false;
+            }
+
+            bot.chat('/tp @s ' + Math.floor(lastMove.x) + ' ' + Math.floor(lastMove.y) + ' ' + Math.floor(lastMove.z));
+            // Teleport commands are server-confirmed asynchronously. Check the actual position,
+            // rather than treating a sent chat command as a completed recovery.
+            for (let attempt = 0; attempt < 15; attempt++) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+                if (bot.interrupt_code) return false;
+                if (bot.entity.position.distanceTo(startPos) > distance) return true;
+            }
+            log(bot, 'Teleport was requested, but the bot did not reach the recovery distance.');
+            return false;
+        } catch (error) {
+            log(bot, `Recovery pathfinding failed: ${error.message}.`);
+            return false;
         }
     }
 
-    await goToGoal(bot, inverted_goal);
-    let new_pos = bot.entity.position;
-    log(bot, `Moved away from ${pos.floored()} to ${new_pos.floored()}.`);
-    return true;
+    try {
+        const reachedGoal = await goToGoal(bot, invertedGoal);
+        const movedDistance = bot.entity.position.distanceTo(startPos);
+        const recovered = reachedGoal && !bot.interrupt_code && movedDistance > distance;
+        if (recovered) {
+            log(bot, `Moved away from ${startPos.floored()} to ${bot.entity.position.floored()} (${movedDistance.toFixed(1)} blocks).`);
+        } else {
+            log(bot, `Recovery did not reach the requested distance (moved ${movedDistance.toFixed(1)} of ${distance} blocks).`);
+        }
+        return recovered;
+    } catch (error) {
+        log(bot, `Recovery navigation failed: ${error.message}.`);
+        return false;
+    }
 }
 
 export async function moveAwayFromEntity(bot, entity, distance=16) {
@@ -1478,13 +1506,29 @@ export async function moveAwayFromEntity(bot, entity, distance=16) {
      * @param {MinecraftBot} bot, reference to the minecraft bot.
      * @param {Entity} entity, the entity to move away from.
      * @param {number} distance, the distance to move away.
-     * @returns {Promise<boolean>} true if the bot moved away, false otherwise.
+     * @returns {Promise<boolean>} true only when the bot is confirmed beyond the requested distance.
      **/
-    let goal = new pf.goals.GoalFollow(entity, distance);
-    let inverted_goal = new pf.goals.GoalInvert(goal);
+    if (!entity?.position || !bot.entity?.position || !Number.isFinite(distance) || distance <= 0 || bot.interrupt_code) {
+        return false;
+    }
+
+    const initialDistance = bot.entity.position.distanceTo(entity.position);
+    if (initialDistance > distance) return true;
+
+    const goal = new pf.goals.GoalInvert(new pf.goals.GoalFollow(entity, distance));
     bot.pathfinder.setMovements(new pf.Movements(bot));
-    await bot.pathfinder.goto(inverted_goal);
-    return true;
+    try {
+        await bot.pathfinder.goto(goal);
+        const finalDistance = bot.entity.position.distanceTo(entity.position);
+        const recovered = !bot.interrupt_code && finalDistance > distance;
+        if (!recovered) {
+            log(bot, `Could not move far enough away from ${entity.username || entity.name || 'the target'}.`);
+        }
+        return recovered;
+    } catch (error) {
+        log(bot, `Could not move away from target: ${error.message}.`);
+        return false;
+    }
 }
 
 export async function avoidEnemies(bot, distance=16) {

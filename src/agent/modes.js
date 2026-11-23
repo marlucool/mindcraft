@@ -99,12 +99,19 @@ const modes_list = [
         last_time: Date.now(),
         max_stuck_time: 20,
         prev_dig_block: null,
+        recovery_attempts: 0,
+        max_recovery_attempts: 3,
+        recovery_exhausted: false,
         update: async function (agent) {
-            if (agent.isIdle()) { 
+            if (agent.isIdle()) {
                 this.prev_location = null;
                 this.stuck_time = 0;
+                this.recovery_attempts = 0;
+                this.recovery_exhausted = false;
                 return; // don't get stuck when idle
             }
+            if (this.recovery_exhausted) return;
+
             const bot = agent.bot;
             const cur_dig_block = bot.targetDigBlock;
             if (cur_dig_block && !this.prev_dig_block) {
@@ -114,19 +121,54 @@ const modes_list = [
                 this.stuck_time += (Date.now() - this.last_time) / 1000;
             }
             else {
+                if (this.prev_location && this.prev_location.distanceTo(bot.entity.position) >= this.distance) {
+                    this.recovery_attempts = 0;
+                    this.recovery_exhausted = false;
+                }
                 this.prev_location = bot.entity.position.clone();
                 this.stuck_time = 0;
                 this.prev_dig_block = null;
             }
+
             const max_stuck_time = cur_dig_block?.name === 'obsidian' ? this.max_stuck_time * 2 : this.max_stuck_time;
             if (this.stuck_time > max_stuck_time) {
-                say(agent, 'I\'m stuck!');
+                if (this.recovery_attempts >= this.max_recovery_attempts) {
+                    say(agent, 'Recovery limit reached. Pausing automatic recovery instead of looping.');
+                    this.stuck_time = 0;
+                    this.recovery_exhausted = true;
+                    return;
+                }
+
+                this.recovery_attempts++;
+                say(agent, `I'm stuck. Recovery attempt ${this.recovery_attempts}/${this.max_recovery_attempts}.`);
                 this.stuck_time = 0;
                 execute(this, agent, async () => {
-                    const crashTimeout = setTimeout(() => { agent.cleanKill("Got stuck and couldn't get unstuck") }, 10000);
-                    await skills.moveAway(bot, 5);
-                    clearTimeout(crashTimeout);
-                    say(agent, 'I\'m free.');
+                    const recoveryTimeout = setTimeout(() => {
+                        const stopResult = agent.actions.stop();
+                        if (stopResult && typeof stopResult.catch === 'function') {
+                            stopResult.catch(error => console.warn('Could not stop timed-out recovery action:', error));
+                        }
+                        say(agent, 'Recovery timed out; stopping this attempt.');
+                    }, 15000);
+
+                    let recovered = false;
+                    try {
+                        recovered = await skills.moveAway(bot, 5);
+                    } finally {
+                        clearTimeout(recoveryTimeout);
+                    }
+
+                    if (recovered) {
+                        this.recovery_attempts = 0;
+                        this.recovery_exhausted = false;
+                        say(agent, 'Recovery movement succeeded.');
+                    } else {
+                        say(agent, 'Recovery movement failed; I will not report that I am free.');
+                        if (this.recovery_attempts >= this.max_recovery_attempts) {
+                            this.recovery_exhausted = true;
+                            say(agent, 'Recovery limit reached. Pausing automatic recovery.');
+                        }
+                    }
                 });
             }
             this.last_time = Date.now();
@@ -135,6 +177,8 @@ const modes_list = [
             this.prev_location = null;
             this.stuck_time = 0;
             this.prev_dig_block = null;
+            this.recovery_attempts = 0;
+            this.recovery_exhausted = false;
         }
     },
     {
