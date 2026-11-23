@@ -1,0 +1,125 @@
+--- /tank/minecraft-bot-test/.isolation/phase6/original/node_modules/mineflayer-pathfinder/index.js	2026-11-22 08:42:14.042027433 +0800
++++ /tank/minecraft-bot-test/node_modules/mineflayer-pathfinder/index.js	2026-11-23 10:01:41.121599913 +0800
+@@ -30,6 +30,8 @@
+   let lastNodeTime = performance.now()
+   let returningPos = null
+   let stopPathing = false
++  let failedDigKey = null
++  let failedDigCount = 0
+   const physics = new Physics(bot)
+   const lockPlaceBlock = new Lock()
+   const lockEquipItem = new Lock()
+@@ -145,6 +147,8 @@
+   }
+ 
+   bot.pathfinder.setGoal = (goal, dynamic = false) => {
++    failedDigKey = null
++    failedDigCount = 0
+     stateGoal = goal
+     dynamicGoal = dynamic
+     bot.emit('goal_updated', goal, dynamic)
+@@ -165,7 +169,10 @@
+   }
+ 
+   bot.pathfinder.stop = () => {
++    // Cancel immediately. A planning continuation from an older goal must not
++    // resurrect it after the caller has finished or cancelled navigation.
+     stopPathing = true
++    stop()
+   }
+ 
+   bot.on('physicsTick', monitorMovement)
+@@ -191,7 +198,11 @@
+         curPoint.z = Math.floor(curPoint.z) + 0.5
+         continue
+       }
+-      let np = getPositionOnTopOf(b)
++      // Thin collision shapes (such as bamboo stalks) are not full-height
++      // platforms. Do not turn a walk-through node into a jump-on-top node;
++      // retain the normal center-of-block walking waypoint instead.
++      const thinCollision = b && b.name === 'bamboo' && b.shapes.length > 0 && b.shapes.every(shape => shape[4] >= 0.999 && shape[3] - shape[0] <= 0.25 && shape[5] - shape[2] <= 0.25) && !b.climbable
++      let np = thinCollision ? null : getPositionOnTopOf(b)
+       if (np === null) np = getPositionOnTopOf(bot.blockAt(new Vec3(curPoint.x, curPoint.y - 1, curPoint.z)))
+       if (np) {
+         curPoint.x = np.x
+@@ -454,13 +465,20 @@
+       }
+     }
+ 
++    if (stopPathing) return
++
+     if (astarContext && astartTimedout) {
+       const results = astarContext.compute()
+       results.path = postProcessPath(results.path)
+       pathFromPlayer(results.path)
+       bot.emit('path_update', results)
+-      path = results.path
+-      astartTimedout = results.status === 'partial'
++      if (stateGoal.constructor.name === 'GoalBlock' && results.status === 'partial') {
++        path = []
++        astartTimedout = true
++      } else {
++        path = results.path
++        astartTimedout = results.status === 'partial'
++      }
+     }
+ 
+     if (bot.pathfinder.LOSWhenPlacingBlocks && returningPos) {
+@@ -468,6 +486,16 @@
+       returningPos = null
+     }
+ 
++    // A non-dynamic GoalBlock is a discrete standing location, not a request
++    // to oscillate forever around its exact center. Accept the block when the
++    // player is genuinely standing in it, including after a sprint jump.
++    if (path.length === 0 && stateGoal && !dynamicGoal && stateGoal.isEnd(bot.entity.position.floored()) && bot.entity.onGround) {
++      bot.emit('goal_reached', stateGoal)
++      stateGoal = null
++      fullStop()
++      return
++    }
++
+     if (path.length === 0) {
+       lastNodeTime = performance.now()
+       if (stateGoal && stateMovements) {
+@@ -477,11 +505,19 @@
+             stateGoal = null
+             fullStop()
+           }
+-        } else if (!pathUpdated) {
++        } else if (!pathUpdated && !stopPathing) {
+           const results = bot.pathfinder.getPathTo(stateMovements, stateGoal)
+           bot.emit('path_update', results)
+-          path = results.path
+-          astartTimedout = results.status === 'partial'
++          // Exact goals must not wander along a best-effort route when the
++          // planner has not established that the goal is reachable. Recovery
++          // goals such as GoalInvert may still use partial paths deliberately.
++          if (stateGoal.constructor.name === 'GoalBlock' && results.status === 'partial') {
++            path = []
++            astartTimedout = true
++          } else {
++            path = results.path
++            astartTimedout = results.status === 'partial'
++          }
+           pathUpdated = true
+         }
+       }
+@@ -506,6 +542,17 @@
+         const digBlock = () => {
+           bot.dig(block, true)
+             .catch(_ignoreError => {
++              const key = `${block.position.x},${block.position.y},${block.position.z}`
++              if (failedDigKey === key) failedDigCount++
++              else { failedDigKey = key; failedDigCount = 1 }
++              // A failed block may be unbreakable, protected, or a client/server
++              // mismatch. Do not retry the identical action forever.
++              if (failedDigCount >= 3) {
++                bot.emit('pathfinder_dig_failed', { position: block.position.clone(), attempts: failedDigCount, error: _ignoreError })
++                resetPath('dig_error')
++                stop()
++                return
++              }
+               resetPath('dig_error')
+             })
+             .then(function () {

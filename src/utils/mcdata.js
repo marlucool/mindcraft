@@ -67,6 +67,12 @@ export function initBot(username) {
 
     const bot = createBot(options);
 
+    // Minecraft represents the player width as a float32 value.
+    // Keep the client-side collision boundary consistent with that representation.
+    bot.once('inject_allowed', () => {
+        bot.physics.playerHalfWidth = Math.fround(0.6) / 2;
+    });
+
     // Throttle position packets to avoid kicks on Paper/Spigot servers
     // Paper enforces stricter packet rate limits than vanilla, causing ECONNRESET
     // when mineflayer sends position updates faster than 50ms apart
@@ -271,7 +277,15 @@ export function getItemCraftingRecipes(itemName) {
         ]);
     }
     // sort recipes by if their ingredients include common items
-    const commonItems = ['oak_planks', 'oak_log', 'coal', 'cobblestone'];
+    const commonItems = [
+        'oak_planks', 'spruce_planks', 'birch_planks', 'jungle_planks', 
+        'acacia_planks', 'dark_oak_planks', 'mangrove_planks', 'bamboo_planks', 
+        'cherry_planks', 'crimson_planks', 'warped_planks',
+        'oak_log', 'spruce_log', 'birch_log', 'jungle_log', 
+        'acacia_log', 'dark_oak_log', 'mangrove_log', 'bamboo_log', 
+        'cherry_log', 'crimson_stem', 'warped_stem',
+        'coal', 'cobblestone'
+    ];
     recipes.sort((a, b) => {
         let commonCountA = Object.keys(a[0]).filter(key => commonItems.includes(key)).reduce((acc, key) => acc + a[0][key], 0);
         let commonCountB = Object.keys(b[0]).filter(key => commonItems.includes(key)).reduce((acc, key) => acc + b[0][key], 0);

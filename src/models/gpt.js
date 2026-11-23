@@ -44,6 +44,10 @@ export class GPT {
                     stop: stop_seq,
                     ...(this.params || {})
                 };
+                // Disable thinking mode for Qwen models via LM Studio proxy
+                if (model.includes("qwen")) {
+                    pack.chat_template_kwargs = { enable_thinking: false };
+                }
                 if (model.includes('o1') || model.includes('o3') || model.includes('5')) {
                     delete pack.stop;
                 }
@@ -51,7 +55,7 @@ export class GPT {
                 if (completion.choices[0].finish_reason == 'length')
                     throw new Error('Context length exceeded'); 
                 console.log('Received.');
-                res = completion.choices[0].message.content;
+                res = completion.choices[0].message.content || completion.choices[0].message.reasoning_content || '';
             } 
             // otherwise, use responses
             else {
@@ -80,8 +84,8 @@ export class GPT {
                 console.log(err);
                 res = 'Vision is only supported by certain models.';
             } else {
-                console.log(err);
-                res = 'My brain disconnected, try again.';
+                console.error('Real API error, throwing for fallback:', err.message);
+                throw err;
             }
         }
         return res;

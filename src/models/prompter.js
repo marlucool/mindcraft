@@ -59,6 +59,18 @@ export class Prompter {
         let chat_model_profile = selectAPI(this.profile.model);
         this.chat_model = createModel(chat_model_profile);
 
+        // Backup model for fallback when primary fails
+        this.backup_model = null;
+        if (this.profile.backup_model) {
+            try {
+                let backup_model_profile = selectAPI(this.profile.backup_model);
+                this.backup_model = createModel(backup_model_profile);
+                console.log('Backup model loaded:', this.profile.backup_model.model);
+            } catch (e) {
+                console.warn('Failed to load backup model:', e.message);
+            }
+        }
+
         if (this.profile.code_model) {
             let code_model_profile = selectAPI(this.profile.code_model);
             this.code_model = createModel(code_model_profile);
@@ -215,10 +227,24 @@ export class Prompter {
         this.most_recent_msg_time = Date.now();
         let current_msg_time = this.most_recent_msg_time;
 
-        for (let i = 0; i < 3; i++) { // try 3 times to avoid hallucinations
+        // Track consecutive failures for fallback
+        let consecutiveFailures = 0;
+        const MAX_FAILURES = 3;
+        let currentModel = this.chat_model;
+        let modelName = this.profile.model.model;
+
+        for (let i = 0; i < MAX_FAILURES * 2; i++) { // try up to 6 times (3 primary + 3 backup)
             await this.checkCooldown();
             if (current_msg_time !== this.most_recent_msg_time) {
                 return '';
+            }
+
+            // Switch to backup model after MAX_FAILURES consecutive failures
+            if (consecutiveFailures >= MAX_FAILURES && this.backup_model && currentModel === this.chat_model) {
+                currentModel = this.backup_model;
+                modelName = this.profile.backup_model.model;
+                console.log(`Switching to backup model: ${modelName} after ${MAX_FAILURES} failures`);
+                consecutiveFailures = 0; // Reset counter for backup model
             }
 
             let prompt = this.profile.conversing;
@@ -226,16 +252,22 @@ export class Prompter {
             let generation;
 
             try {
-                generation = await this.chat_model.sendRequest(messages, prompt);
+                generation = await currentModel.sendRequest(messages, prompt);
                 if (typeof generation !== 'string') {
                     console.error('Error: Generated response is not a string', generation);
                     throw new Error('Generated response is not a string');
                 }
-                console.log("Generated response:", generation);
+                console.log(`Generated response (${modelName}):`, generation);
                 await this._saveLog(prompt, messages, generation, 'conversation');
+                consecutiveFailures = 0; // Reset on success
 
             } catch (error) {
-                console.error('Error during message generation or file writing:', error);
+                consecutiveFailures++;
+                console.error(`Error during message generation (${modelName}, attempt ${consecutiveFailures}):`, error.message);
+                if (consecutiveFailures >= MAX_FAILURES * 2) {
+                    console.error('Both primary and backup models failed. Giving up.');
+                    return '';
+                }
                 continue;
             }
 
@@ -261,6 +293,43 @@ export class Prompter {
         return '';
     }
 
+    async _sendWithFallback(messages, prompt, logType = 'conversation') {
+        let consecutiveFailures = 0;
+        const MAX_FAILURES = 3;
+        let currentModel = this.chat_model;
+        let modelName = this.profile.model.model;
+
+        for (let i = 0; i < MAX_FAILURES * 2; i++) {
+            await this.checkCooldown();
+
+            if (consecutiveFailures >= MAX_FAILURES && this.backup_model && currentModel === this.chat_model) {
+                currentModel = this.backup_model;
+                modelName = this.profile.backup_model.model;
+                console.log(`Switching to backup model: ${modelName} after ${MAX_FAILURES} failures`);
+                consecutiveFailures = 0;
+            }
+
+            let generation;
+            try {
+                generation = await currentModel.sendRequest(messages, prompt);
+                if (typeof generation !== 'string') {
+                    throw new Error('Generated response is not a string');
+                }
+                console.log(`Generated response (${modelName}):`, generation);
+                consecutiveFailures = 0;
+                return generation;
+            } catch (error) {
+                consecutiveFailures++;
+                console.error(`Error (${modelName}, attempt ${consecutiveFailures}):`, error.message);
+                if (consecutiveFailures >= MAX_FAILURES * 2) {
+                    console.error('Both primary and backup models failed.');
+                    return '';
+                }
+            }
+        }
+        return '';
+    }
+
     async promptCoding(messages) {
         if (this.awaiting_coding) {
             console.warn('Already awaiting coding response, returning no response.');
@@ -271,7 +340,7 @@ export class Prompter {
         let prompt = this.profile.coding;
         prompt = await this.replaceStrings(prompt, messages, this.coding_examples);
 
-        let resp = await this.code_model.sendRequest(messages, prompt);
+        let resp = await this._sendWithFallback(messages, prompt);
         this.awaiting_coding = false;
         await this._saveLog(prompt, messages, resp, 'coding');
         return resp;
@@ -281,7 +350,7 @@ export class Prompter {
         await this.checkCooldown();
         let prompt = this.profile.saving_memory;
         prompt = await this.replaceStrings(prompt, null, null, to_summarize);
-        let resp = await this.chat_model.sendRequest([], prompt);
+        let resp = await this._sendWithFallback([], prompt, 'memSaving');
         await this._saveLog(prompt, to_summarize, resp, 'memSaving');
         if (resp?.includes('</think>')) {
             const [_, afterThink] = resp.split('</think>')
@@ -296,7 +365,7 @@ export class Prompter {
         let messages = this.agent.history.getHistory();
         messages.push({role: 'user', content: new_message});
         prompt = await this.replaceStrings(prompt, null, null, messages);
-        let res = await this.chat_model.sendRequest([], prompt);
+        let res = await this._sendWithFallback([], prompt);
         return res.trim().toLowerCase() === 'respond';
     }
 
@@ -317,7 +386,7 @@ export class Prompter {
         user_message = await this.replaceStrings(user_message, messages, null, null, last_goals);
         let user_messages = [{role: 'user', content: user_message}];
 
-        let res = await this.chat_model.sendRequest(user_messages, system_message);
+        let res = await this._sendWithFallback(user_messages, system_message);
 
         let goal = null;
         try {

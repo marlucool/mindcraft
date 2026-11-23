@@ -99,10 +99,13 @@ const modes_list = [
         last_time: Date.now(),
         max_stuck_time: 20,
         prev_dig_block: null,
+        recovery_attempts: 0,
+        max_recovery_attempts: 3,
         update: async function (agent) {
             if (agent.isIdle()) { 
                 this.prev_location = null;
                 this.stuck_time = 0;
+                this.recovery_attempts = 0;
                 return; // don't get stuck when idle
             }
             const bot = agent.bot;
@@ -120,13 +123,24 @@ const modes_list = [
             }
             const max_stuck_time = cur_dig_block?.name === 'obsidian' ? this.max_stuck_time * 2 : this.max_stuck_time;
             if (this.stuck_time > max_stuck_time) {
-                say(agent, 'I\'m stuck!');
+                if (this.recovery_attempts >= this.max_recovery_attempts) {
+                    say(agent, 'Still stuck after several different recovery attempts. Pausing navigation instead of looping.');
+                    this.stuck_time = 0;
+                    return;
+                }
+                this.recovery_attempts++;
+                say(agent, "I'm stuck!");
                 this.stuck_time = 0;
                 execute(this, agent, async () => {
-                    const crashTimeout = setTimeout(() => { agent.cleanKill("Got stuck and couldn't get unstuck") }, 10000);
-                    await skills.moveAway(bot, 5);
-                    clearTimeout(crashTimeout);
-                    say(agent, 'I\'m free.');
+                    const unstuckTimeout = setTimeout(() => { agent.actions.stop(); say(agent, "Still stuck, trying something else."); }, 15000);
+                    const recovered = await skills.moveAway(bot, 5);
+                    clearTimeout(unstuckTimeout);
+                    if (recovered) {
+                        this.recovery_attempts = 0;
+                        say(agent, "I'm free.");
+                    } else {
+                        say(agent, 'Recovery movement did not free me.');
+                    }
                 });
             }
             this.last_time = Date.now();
