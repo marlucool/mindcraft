@@ -76,12 +76,18 @@ diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/
 
      this.liquids = new Set()
      this.liquids.add(registry.blocksByName.water.id)
-@@ -62,7 +62,7 @@
+@@ -62,7 +62,13 @@
 
      this.climbables = new Set()
      this.climbables.add(registry.blocksByName.ladder.id)
 -    // this.climbables.add(registry.blocksByName.vine.id)
-+    this.climbables.add(registry.blocksByName.vine.id)
++    if (registry.blocksByName.vine) this.climbables.add(registry.blocksByName.vine.id)
++    if (registry.blocksByName.weeping_vines) this.climbables.add(registry.blocksByName.weeping_vines.id)
++    if (registry.blocksByName.weeping_vines_plant) this.climbables.add(registry.blocksByName.weeping_vines_plant.id)
++    if (registry.blocksByName.twisting_vines) this.climbables.add(registry.blocksByName.twisting_vines.id)
++    if (registry.blocksByName.twisting_vines_plant) this.climbables.add(registry.blocksByName.twisting_vines_plant.id)
++    if (registry.blocksByName.cave_vines) this.climbables.add(registry.blocksByName.cave_vines.id)
++    if (registry.blocksByName.cave_vines_plant) this.climbables.add(registry.blocksByName.cave_vines_plant.id)
      this.emptyBlocks = new Set()
 
      this.replaceables = new Set()
