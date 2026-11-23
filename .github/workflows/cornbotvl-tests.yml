@@ -34,4 +34,5 @@ jobs:
             tests/pathfinder_vine_climbables.test.js \
             tests/pathfinder_diagonal_corners.test.js \
             tests/goto_path_search.test.js \
-            tests/door_types.test.js
+            tests/door_types.test.js \\
+            tests/move_away.test.js

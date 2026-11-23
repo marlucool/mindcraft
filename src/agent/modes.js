@@ -110,9 +110,19 @@ const modes_list = [
                 this.recovery_exhausted = false;
                 return; // don't get stuck when idle
             }
-            if (this.recovery_exhausted) return;
-
             const bot = agent.bot;
+            if (this.recovery_exhausted) {
+                // Stop retrying while still in the same stuck position, but re-arm
+                // recovery if another action has genuinely moved the bot.
+                if (this.prev_location && this.prev_location.distanceTo(bot.entity.position) < this.distance) {
+                    this.last_time = Date.now();
+                    return;
+                }
+                this.recovery_exhausted = false;
+                this.recovery_attempts = 0;
+                this.stuck_time = 0;
+            }
+
             const cur_dig_block = bot.targetDigBlock;
             if (cur_dig_block && !this.prev_dig_block) {
                 this.prev_dig_block = cur_dig_block;
